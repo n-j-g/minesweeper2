@@ -1,0 +1,16 @@
+{
+  "name": "Minesweeper 2",
+  "short_name": "Minesweeper 2",
+  "description": "Minesweeper with naive auto-fill and risk-free settling, so a solved board never comes down to a guess.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#e4e9ec",
+  "theme_color": "#f6f8f9",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

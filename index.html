@@ -1,0 +1,931 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Minesweeper 2</title>
+<meta name="description" content="Minesweeper with naive auto-fill and risk-free settling, so a solved board never comes down to a guess.">
+<meta name="theme-color" content="#f6f8f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#172027" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Minesweeper 2">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<style>
+@font-face{font-family:"Martian Mono";font-style:normal;font-weight:500;font-display:swap;src:url(fonts/martian-mono-latin-500-normal.woff2) format("woff2")}
+@font-face{font-family:"Martian Mono";font-style:normal;font-weight:700;font-display:swap;src:url(fonts/martian-mono-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:"Martian Mono";font-style:normal;font-weight:800;font-display:swap;src:url(fonts/martian-mono-latin-800-normal.woff2) format("woff2")}
+@font-face{font-family:"Instrument Sans";font-style:normal;font-weight:400;font-display:swap;src:url(fonts/instrument-sans-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Instrument Sans";font-style:normal;font-weight:500;font-display:swap;src:url(fonts/instrument-sans-latin-500-normal.woff2) format("woff2")}
+@font-face{font-family:"Instrument Sans";font-style:normal;font-weight:600;font-display:swap;src:url(fonts/instrument-sans-latin-600-normal.woff2) format("woff2")}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<style>
+/* Layout: one-screen phone app. Slim top bar, a board that scrolls inside its own pane, a fixed-height message line, and a tool dock under the thumb. Nothing resizes during play. */
+:root{
+  --ground:#e4e9ec; --panel:#f6f8f9; --ink:#1c272f; --muted:#5a6872; --line:#cfd8de;
+  --tile:#aab9c3; --tile-hi:#c5d1d9; --tile-lo:#8797a3; --open:#f1f4f6; --open-line:#d9e0e5;
+  --flag:#c8372f; --auto:#9a6716; --pair:#6a47cf; --pair-soft:#e4dcfa; --deny:#c0402e; --ok:#2b7a4c; --boom:#f3c9c3; --safe:#2f8a55; --safe-soft:#cfe9d8;
+  --n1:#2356c4; --n2:#2b783c; --n3:#c3332a; --n4:#2a2e85; --n5:#882a1f; --n6:#1a7878; --n7:#1c272f; --n8:#68747e;
+  --scrim:rgba(16,22,27,.42);
+  --f-display:"Martian Mono", ui-monospace, Menlo, Consolas, monospace;
+  --f-body:"Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --cell:32px; --gap:2px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#10151a; --panel:#172027; --ink:#e2e8ec; --muted:#91a0aa; --line:#29343c;
+    --tile:#3b4a55; --tile-hi:#4b5b67; --tile-lo:#28333b; --open:#1b2329; --open-line:#252e35;
+    --flag:#ff6a5d; --auto:#e2a546; --pair:#a68cff; --pair-soft:#2d2450; --deny:#ff7966; --ok:#5ec489; --boom:#5a2521; --safe:#5ec489; --safe-soft:#1f4030;
+    --n1:#7ea8ff; --n2:#6fcf83; --n3:#ff7d71; --n4:#aaa7ff; --n5:#ff9b7c; --n6:#5ed0cf; --n7:#e2e8ec; --n8:#9aa7b0;
+    --scrim:rgba(0,0,0,.6);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#10151a; --panel:#172027; --ink:#e2e8ec; --muted:#91a0aa; --line:#29343c;
+  --tile:#3b4a55; --tile-hi:#4b5b67; --tile-lo:#28333b; --open:#1b2329; --open-line:#252e35;
+  --flag:#ff6a5d; --auto:#e2a546; --pair:#a68cff; --pair-soft:#2d2450; --deny:#ff7966; --ok:#5ec489; --boom:#5a2521; --safe:#5ec489; --safe-soft:#1f4030;
+  --n1:#7ea8ff; --n2:#6fcf83; --n3:#ff7d71; --n4:#aaa7ff; --n5:#ff9b7c; --n6:#5ed0cf; --n7:#e2e8ec; --n8:#9aa7b0;
+  --scrim:rgba(0,0,0,.6);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+html{background:var(--panel)}
+body{background:var(--ground);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.4;overflow:hidden;-webkit-text-size-adjust:100%}
+button{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+button:focus-visible{outline:2px solid var(--pair);outline-offset:2px}
+
+.app{height:100%;display:flex;flex-direction:column}
+
+/* Top bar */
+.top{display:flex;align-items:center;gap:6px;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+.iconbtn{width:40px;height:40px;flex:none;display:grid;place-items:center;border:1px solid var(--line);background:var(--panel);border-radius:10px;cursor:pointer;font:700 18px/1 var(--f-display)}
+.iconbtn svg{width:18px;height:18px}
+.counter{flex:1;min-width:0;text-align:center;font:700 18px/1 var(--f-display);font-variant-numeric:tabular-nums}
+.counter small{display:block;font:600 9px/1.2 var(--f-body);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+.newbtn{flex:none;height:40px;padding:0 12px;border-radius:10px;border:1px solid var(--ink);background:var(--ink);color:var(--panel);font:700 13px/1 var(--f-display);cursor:pointer;display:grid;place-items:center;gap:2px}
+.newbtn small{font:500 9px/1 var(--f-body);letter-spacing:.06em;text-transform:uppercase;opacity:.75}
+.zoom{display:flex;gap:4px;flex:none}
+.zoom .iconbtn{width:36px}
+
+/* Board pane: the only thing that scrolls */
+.scroller{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:12px 16px;touch-action:manipulation}
+#board{display:grid;grid-template-columns:repeat(var(--W),var(--cell));gap:var(--gap);width:max-content;margin:0 auto;
+  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.cell{width:var(--cell);height:var(--cell);border-radius:max(3px,calc(var(--cell) * .14));display:grid;place-items:center;
+  font:800 calc(var(--cell) * .5)/1 var(--f-display);background:var(--tile);color:var(--ink);
+  box-shadow:inset 0 2px 0 var(--tile-hi),inset 0 -2px 0 var(--tile-lo);-webkit-touch-callout:none}
+.cell.press:not(.open){background:var(--tile-hi)}
+.cell.just{animation:land .3s ease-out}
+@keyframes land{from{background:var(--tile-hi)}}
+.cell.open{background:var(--open);box-shadow:inset 0 0 0 1px var(--open-line)}
+.cell svg{width:62%;height:62%;display:block;pointer-events:none}
+.cell.f{color:var(--flag)} .cell.a{color:var(--auto)} .cell.r{color:var(--pair)}
+.cell.m{background:var(--open);box-shadow:inset 0 0 0 1px var(--open-line)}
+.cell.x{background:var(--boom)}
+.cell.w{color:var(--flag);opacity:.55}
+.cell.safe{background:var(--safe-soft);box-shadow:inset 0 0 0 2px var(--safe)}
+.cell.safe:empty::after{content:"";width:28%;height:28%;border-radius:50%;background:var(--safe)}
+.cell.pick{background:var(--pair-soft);box-shadow:inset 0 0 0 3px var(--pair)}
+.cell.pick.hint{animation:hint 1.3s ease-in-out infinite}
+.cell.deny{box-shadow:inset 0 0 0 3px var(--deny)}
+@keyframes hint{50%{box-shadow:inset 0 0 0 calc(var(--cell) * .22) var(--pair)}}
+@media (prefers-reduced-motion: reduce){.cell.just{animation:none}.cell.pick.hint{animation:none;box-shadow:inset 0 0 0 4px var(--pair)}}
+.n1{color:var(--n1)}.n2{color:var(--n2)}.n3{color:var(--n3)}.n4{color:var(--n4)}.n5{color:var(--n5)}.n6{color:var(--n6)}.n7{color:var(--n7)}.n8{color:var(--n8)}
+
+/* Dock */
+.dock{background:var(--panel);border-top:1px solid var(--line);padding:8px 16px 10px;display:grid;gap:8px}
+#msg{margin:0;height:2.7em;font-size:13px;line-height:1.35;color:var(--muted);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+#msg.ok{color:var(--ok)} #msg.deny{color:var(--deny)}
+.modes{display:grid;grid-template-columns:repeat(3,1fr);background:var(--ground);border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
+.modes button{height:42px;border:0;border-radius:9px;background:transparent;font-weight:600;font-size:15px;color:var(--muted);cursor:pointer}
+.modes button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+.actions{display:grid;grid-template-columns:1fr auto auto;gap:8px}
+.btn{height:44px;padding:0 14px;border:1px solid var(--line);background:var(--panel);border-radius:12px;font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap}
+.btn:disabled{opacity:.42;cursor:default}
+.btn.primary{background:var(--pair);border-color:var(--pair);color:var(--panel)}
+.btn.cheat{display:inline-flex;align-items:center;gap:7px;border-color:var(--safe)}
+.btn.cheat[aria-pressed="true"]{background:var(--safe-soft)}
+.pill{font:700 11px/1 var(--f-display);font-variant-numeric:tabular-nums;color:var(--safe);background:var(--safe-soft);border-radius:999px;padding:4px 7px}
+
+/* Settings sheet */
+.sheet{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;justify-content:flex-end}
+.backdrop{position:absolute;inset:0;background:var(--scrim)}
+.panel{position:relative;background:var(--panel);border-radius:18px 18px 0 0;max-height:86%;overflow:auto;-webkit-overflow-scrolling:touch;
+  padding:16px 16px calc(20px + env(safe-area-inset-bottom, 0px));display:grid;gap:14px}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.panel h2{margin:0;font:800 18px/1.2 var(--f-display);letter-spacing:-.01em}
+.panel h3{margin:0 0 6px;font:700 11px/1.2 var(--f-display);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.diffs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.diffs button{border:1px solid var(--line);background:var(--ground);border-radius:12px;padding:10px 6px;cursor:pointer;display:grid;gap:3px;text-align:center}
+.diffs button b{font-size:14px}
+.diffs button span{font:500 11px/1.2 var(--f-display);color:var(--muted);font-variant-numeric:tabular-nums}
+.diffs button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.toggles{display:grid;gap:2px}
+.toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;font-size:15px;cursor:pointer}
+.toggle input{width:20px;height:20px;accent-color:var(--pair);margin:0;flex:none}
+.note{margin:0;font-size:13px;color:var(--muted);max-width:62ch}
+.stats{font:500 12px/1.5 var(--f-display);color:var(--muted);font-variant-numeric:tabular-nums}
+.legend{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.legend li{display:flex;align-items:center;gap:10px;font-size:14px}
+.legend .cell{--cell:26px;flex:none}
+.rules p{margin:0 0 8px;font-size:14px;max-width:62ch}
+</style>
+
+<div class="app">
+  <header class="top">
+    <button type="button" class="iconbtn" id="menuBtn" aria-label="Settings and help">
+      <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3 5h12M3 9h12M3 13h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+    <div class="counter"><small>Mines</small><span id="minesLeft">010</span></div>
+    <button type="button" class="newbtn" id="newGame">New<small id="diffName">Beginner</small></button>
+    <div class="counter"><small>Time</small><span id="timer">000</span></div>
+    <div class="zoom">
+      <button type="button" class="iconbtn" id="zoomOut" aria-label="Smaller cells">−</button>
+      <button type="button" class="iconbtn" id="zoomIn" aria-label="Bigger cells">+</button>
+    </div>
+  </header>
+
+  <main class="scroller" id="scroller">
+    <div id="board" role="grid" aria-label="Minefield"></div>
+  </main>
+
+  <footer class="dock">
+    <p id="msg" aria-live="polite"></p>
+    <div class="modes" id="modeSeg" role="group" aria-label="What a tap does">
+      <button type="button" id="m-dig" data-m="dig">Dig</button>
+      <button type="button" id="m-flag" data-m="flag">Flag</button>
+      <button type="button" id="m-pick" data-m="pick">50/50</button>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn" id="settle" disabled>Settle</button>
+      <button type="button" class="btn" id="clearPick" disabled>Clear</button>
+      <button type="button" class="btn cheat" id="cheatBtn" disabled>Safe cells <span class="pill" id="cheatLeft">0</span></button>
+    </div>
+  </footer>
+</div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="backdrop" id="backdrop"></div>
+  <section class="panel" role="dialog" aria-modal="true" aria-label="Settings and help">
+    <div class="panel-head"><h2>Minesweeper 2</h2><button type="button" class="btn" id="closeSheet">Done</button></div>
+    <div>
+      <h3>New game</h3>
+      <div class="diffs" id="diffSeg">
+        <button type="button" id="d-beginner" data-d="beginner"><b>Beginner</b><span>9×9 · 10</span></button>
+        <button type="button" id="d-intermediate" data-d="intermediate"><b>Intermediate</b><span>16×16 · 40</span></button>
+        <button type="button" id="d-expert" data-d="expert"><b>Expert</b><span>16×30 · 99</span></button>
+      </div>
+    </div>
+    <div>
+      <h3>Solver</h3>
+      <div class="toggles">
+        <label class="toggle">Auto-fill naive cells <input type="checkbox" id="optNaive"></label>
+        <label class="toggle">Open around satisfied numbers <input type="checkbox" id="optOpen"></label>
+        <label class="toggle">Animate the fill in waves <input type="checkbox" id="optWaves"></label>
+        <label class="toggle">Help when I'm stuck <input type="checkbox" id="optStuck"></label>
+      </div>
+    </div>
+    <div>
+      <h3>Cheats</h3>
+      <div class="toggles"><label class="toggle">Unlimited cheats <input type="checkbox" id="optUnlimited"></label></div>
+      <p class="note">Off: “Safe cells” can be used 0 times on Beginner, once on Intermediate and 3 times on Expert per game. On: it becomes a switch that keeps every safe cell highlighted.</p>
+    </div>
+    <div>
+      <h3>This game</h3>
+      <div class="stats" id="stats"></div>
+    </div>
+    <div>
+      <h3>Controls</h3>
+      <p class="note">A tap uses the selected tool. A long-press does the other one: it flags while you're digging and digs while you're flagging. Tap a number whose mines are all marked to open its other neighbors. Use − and + to resize the cells; the board scrolls.</p>
+    </div>
+    <div>
+      <h3>Marks on the board</h3>
+      <ul class="legend">
+        <li><span class="cell f" id="lg1"></span>Your flag. The solver ignores it.</li>
+        <li><span class="cell a" id="lg2"></span>Placed by the naive fill. Certain.</li>
+        <li><span class="cell r" id="lg3"></span>A mine found by Settle.</li>
+        <li><span class="cell safe"></span>Guaranteed safe, shown by a cheat.</li>
+        <li><span class="cell pick"></span>Selected, or suggested for Settle.</li>
+      </ul>
+    </div>
+    <div class="rules">
+      <h3>What the solver does</h3>
+      <p><strong>Naive fill.</strong> A number touching exactly as many covered cells as its value gets those cells marked. A number whose marks already match its value opens its other neighbors. This repeats until neither applies. It never combines two numbers, so every overlap puzzle is left for you.</p>
+      <p><strong>Settle.</strong> When nothing on the board is guaranteed safe, the game picks something to settle and scrolls to it: a true 50/50 group if one exists, otherwise the edge cell least likely to be a mine. Settle reveals it with no risk. You can also select a group yourself with the 50/50 tool; it qualifies only if the board allows exactly two layouts for it and nothing could ever tell them apart.</p>
+    </div>
+  </section>
+</div>
+
+<script id="logic">
+/* ===== LOGIC START ===== */
+const DIFFS={beginner:{w:9,h:9,m:10,cell:34},intermediate:{w:16,h:16,m:40,cell:30},expert:{w:30,h:16,m:99,cell:28}};
+let S=null, NB=[];
+const MAX_GROUP=12;
+
+function buildNB(W,H){
+  const nb=[];
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const a=[];
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+      if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;
+      if(nx>=0&&ny>=0&&nx<W&&ny<H)a.push(ny*W+nx);
+    }
+    nb.push(a);
+  }
+  return nb;
+}
+function newState(d){
+  const {w,h,m}=DIFFS[d];const n=w*h;
+  return {d,W:w,H:h,M:m,mines:new Uint8Array(n),adj:new Uint8Array(n),revealed:new Uint8Array(n),
+    flag:new Uint8Array(n),started:false,over:false,won:false,lost:-1,elapsed:0,t0:0,
+    stats:{flags:0,opens:0,fifty:0},pick:[]};
+}
+function computeAdj(){
+  const n=S.W*S.H;
+  for(let i=0;i<n;i++){let c=0;for(const j of NB[i])c+=S.mines[j];S.adj[i]=c;}
+}
+function placeMines(first,rand=Math.random){
+  const n=S.W*S.H;const banned=new Set([first,...NB[first]]);
+  let pool=[];for(let i=0;i<n;i++)if(!banned.has(i))pool.push(i);
+  if(pool.length<S.M){pool=[];for(let i=0;i<n;i++)if(i!==first)pool.push(i);}
+  for(let k=0;k<S.M;k++){const r=k+Math.floor(rand()*(pool.length-k));[pool[k],pool[r]]=[pool[r],pool[k]];S.mines[pool[k]]=1;}
+  computeAdj();
+}
+// Flags: 0 none, 1 player, 2 naive-fill (certain), 3 settled 50/50 mine (certain)
+const isKnownMine=i=>S.flag[i]===2||S.flag[i]===3;
+
+/* One wave of naive deductions. Uses only the solver's own certain marks, never player flags. */
+function naiveWave(allowOpen){
+  const flags=new Set(),opens=new Set();
+  const n=S.W*S.H;
+  for(let i=0;i<n;i++){
+    if(!S.revealed[i]||S.adj[i]===0)continue;
+    const cov=[];for(const j of NB[i])if(!S.revealed[j])cov.push(j);
+    if(!cov.length)continue;
+    const v=S.adj[i];
+    if(cov.length===v){for(const j of cov)if(!isKnownMine(j))flags.add(j);}
+    if(allowOpen){
+      let known=0;for(const j of cov)if(isKnownMine(j))known++;
+      if(known===v)for(const j of cov)if(!isKnownMine(j))opens.add(j);
+    }
+  }
+  return {flags:[...flags],opens:[...opens]};
+}
+
+/* Exact analysis of the current board: per-cell mine probability plus joint stats for a target pair. */
+const TOO_COMPLEX={tooComplex:true};
+function analyze(targets,LIMIT=4e6){
+  const {W,H,M,revealed,flag,adj}=S;const N=W*H;
+  const fixed=i=>!revealed[i]&&(flag[i]===2||flag[i]===3);
+  let fixedCount=0,covered=0;
+  for(let i=0;i<N;i++)if(!revealed[i]){covered++;if(fixed(i))fixedCount++;}
+  const vIdx=new Int32Array(N).fill(-1),vars=[],cons=[];
+  for(let i=0;i<N;i++){
+    if(!revealed[i])continue;
+    const vs=[];let f=0;
+    for(const j of NB[i])if(!revealed[j]){if(fixed(j))f++;else vs.push(j);}
+    if(!vs.length)continue;
+    cons.push({vs:vs.map(j=>{if(vIdx[j]<0){vIdx[j]=vars.length;vars.push(j);}return vIdx[j];}),t:adj[i]-f});
+  }
+  for(const t of targets)if(!revealed[t]&&!fixed(t)&&vIdx[t]<0){vIdx[t]=vars.length;vars.push(t);}
+  const nv=vars.length;
+  const par=Array.from({length:nv},(_,i)=>i);
+  const find=x=>{while(par[x]!==x){par[x]=par[par[x]];x=par[x];}return x;};
+  for(const c of cons)for(let k=1;k<c.vs.length;k++){const a=find(c.vs[0]),b=find(c.vs[k]);if(a!==b)par[a]=b;}
+  const cmap=new Map(),comps=[];
+  for(let v=0;v<nv;v++){const r=find(v);if(!cmap.has(r)){cmap.set(r,comps.length);comps.push({vars:[],cons:[]});}comps[cmap.get(r)].vars.push(v);}
+  for(const c of cons)comps[cmap.get(find(c.vs[0]))].cons.push(c);
+  const R=M-fixedCount,I=covered-fixedCount-nv;
+  const tv=targets.map(t=>vIdx[t]);
+  let nodes=0;
+
+  function enumComp(comp){
+    const gv=comp.vars,n=gv.length,local=new Map(gv.map((g,i)=>[g,i]));
+    const cs=comp.cons.map(c=>({vs:c.vs.map(g=>local.get(g)),t:c.t}));
+    const vc=Array.from({length:n},()=>[]);cs.forEach((c,ci)=>c.vs.forEach(v=>vc[v].push(ci)));
+    const order=[],seen=new Uint8Array(n);
+    for(let s=0;s<n;s++){if(seen[s])continue;seen[s]=1;const q=[s];let h=0;
+      while(h<q.length){const v=q[h++];order.push(v);for(const ci of vc[v])for(const u of cs[ci].vs)if(!seen[u]){seen[u]=1;q.push(u);}}}
+    const sum=new Int32Array(cs.length),un=new Int32Array(cs.length);cs.forEach((c,i)=>un[i]=c.vs.length);
+    const val=new Uint8Array(n),counts=new Float64Array(n+1),cell=[];for(let k=0;k<=n;k++)cell.push(new Float64Array(n));
+    // Track which on/off pattern the target cells take, when they all live in this component
+    const tl=tv.map(t=>local.has(t)?local.get(t):-1);
+    const allHere=tl.length>0&&tl.every(x=>x>=0);
+    const pats=new Map();
+    let k=0;
+    for(const c of cs)if(c.t<0||c.t>c.vs.length)return {gv,counts,cell,pats,allHere};
+    (function rec(p){
+      if(++nodes>LIMIT)throw TOO_COMPLEX;
+      if(p===n){counts[k]++;const row=cell[k];for(let v=0;v<n;v++)if(val[v])row[v]++;
+        if(allHere){let key=0;for(let q=0;q<tl.length;q++)if(val[tl[q]])key|=1<<q;
+          let arr=pats.get(key);if(!arr){arr=new Float64Array(n+1);pats.set(key,arr);}arr[k]++;}
+        return;}
+      const v=order[p];
+      for(let x=0;x<=1;x++){
+        if(x&&k+1>R)break;
+        val[v]=x;k+=x;let ok=true;
+        for(const ci of vc[v]){un[ci]--;sum[ci]+=x;}
+        for(const ci of vc[v]){const t=cs[ci].t;if(sum[ci]>t||sum[ci]+un[ci]<t){ok=false;break;}}
+        if(ok)rec(p+1);
+        for(const ci of vc[v]){un[ci]++;sum[ci]-=x;}
+        k-=x;val[v]=0;
+      }
+    })(0);
+    return {gv,counts,cell,pats,allHere};
+  }
+  let res;
+  try{res=comps.map(enumComp);}catch(e){if(e===TOO_COMPLEX)return TOO_COMPLEX;throw e;}
+
+  const conv=(a,b)=>{const r=new Float64Array(a.length+b.length-1);for(let i=0;i<a.length;i++)if(a[i])for(let j=0;j<b.length;j++)r[i+j]+=a[i]*b[j];return r;};
+  const m=res.length;
+  const pre=[Float64Array.of(1)];for(let c=0;c<m;c++)pre.push(conv(pre[c],res[c].counts));
+  const suf=new Array(m+1);suf[m]=Float64Array.of(1);for(let c=m-1;c>=0;c--)suf[c]=conv(res[c].counts,suf[c+1]);
+  const lf=new Float64Array(N+2);for(let i=1;i<=N+1;i++)lf[i]=lf[i-1]+Math.log(i);
+  const logC=x=>lf[I]-lf[x]-lf[I-x];
+  let maxLog=-Infinity;for(let x=0;x<=Math.min(I,Math.max(R,0));x++)maxLog=Math.max(maxLog,logC(x));
+  const B=x=>(x<0||x>I||!isFinite(maxLog))?0:Math.exp(logC(x)-maxLog);
+  const D=pre[m];let total=0;for(let s=0;s<D.length;s++)total+=D[s]*B(R-s);
+  if(!(total>0))return {inconsistent:true};
+
+  const prob=new Float64Array(N);
+  for(let i=0;i<N;i++)prob[i]=revealed[i]?0:(fixed(i)?1:NaN);
+  const compOf=new Map();let patterns=null;
+  res.forEach((r,c)=>{
+    const O=conv(pre[c],suf[c+1]);const n=r.gv.length;const Wk=new Float64Array(n+1);
+    for(let k=0;k<=n;k++){let w=0;for(let s=0;s<O.length;s++)w+=O[s]*B(R-k-s);Wk[k]=w;}
+    for(let v=0;v<n;v++){let p=0;for(let k=0;k<=n;k++)p+=r.cell[k][v]*Wk[k];prob[vars[r.gv[v]]]=p/total;compOf.set(vars[r.gv[v]],c);}
+    if(r.allHere){patterns=[];for(const [key,arr] of r.pats){let w=0;for(let k=0;k<=n;k++)w+=arr[k]*Wk[k];if(w>0)patterns.push({key,p:w/total});}}
+  });
+  let pInt=0;
+  if(I>0){let e=0;for(let s=0;s<D.length;s++)e+=D[s]*B(R-s)*(R-s);pInt=e/I/total;}
+  for(let i=0;i<N;i++)if(Number.isNaN(prob[i]))prob[i]=pInt;
+  return {prob,compOf,patterns};
+}
+
+/* Is this group of covered cells a true 50/50? The group must have exactly two possible
+   mine layouts, and every cell that could ever be opened must see the same count under both,
+   so no future move can tell them apart. Returns {ok, layouts} or {ok:false, why}. */
+function checkGroup(group){
+  const eps=1e-9;
+  const r=analyze(group);
+  if(r.tooComplex)return {ok:false,why:"The board is too tangled to verify this group right now. Try again after a few more moves."};
+  if(r.inconsistent)return {ok:false,why:"Something on the board doesn't add up, so this group can't be checked."};
+  const c0=r.compOf.get(group[0]);
+  if(!r.patterns||group.some(g=>r.compOf.get(g)!==c0))return {ok:false,why:"Not a 50/50: no shared numbers tie all of these cells together."};
+  for(const g of group){const p=r.prob[g];if(p<eps||p>1-eps)return {ok:false,why:"Not a 50/50: at least one of these cells can be worked out from the numbers."};}
+  const pats=r.patterns.filter(x=>x.p>eps);
+  if(pats.length!==2)return {ok:false,grow:true,why:`Not a 50/50: these cells have ${pats.length} possible mine layouts, not 2.`};
+  const toSet=key=>group.filter((_,q)=>key&(1<<q));
+  const L1=toSet(pats[0].key),L2=toSet(pats[1].key);
+  if(L1.length!==L2.length)return {ok:false,grow:true,why:"Not a 50/50 as selected: the two layouts hold different numbers of mines. Make sure every cell in the group is selected."};
+  if(Math.abs(pats[0].p-.5)>1e-6)return {ok:false,why:"Not a 50/50: the two possible layouts aren't equally likely."};
+  const inGroup=new Set(group),m1=new Set(L1),m2=new Set(L2),touched=new Set();
+  for(const g of group)for(const x of NB[g])if(!inGroup.has(x))touched.add(x);
+  for(const x of touched){
+    let a=0,b=0;for(const y of NB[x]){if(m1.has(y))a++;if(m2.has(y))b++;}
+    if(a===b)continue;
+    if(S.revealed[x])return {ok:false,add:NB[x].filter(y=>!S.revealed[y]&&!inGroup.has(y)),why:"Not a clean 50/50: a number next to the group counts the two layouts differently, so other cells still matter."};
+    if(r.prob[x]<1-eps)return {ok:false,add:[x],why:"Not a 50/50 yet: a covered cell next to the group could still tell the layouts apart. Make sure every cell in the group is selected."};
+  }
+  return {ok:true,layouts:[L1,L2]};
+}
+/* Does the board have any guaranteed-safe covered cell? null = couldn't tell in time. */
+function hasSafeMove(){
+  const r=analyze([]);
+  if(r.tooComplex||r.inconsistent)return null;
+  for(let i=0;i<r.prob.length;i++)if(!S.revealed[i]&&r.prob[i]<1e-9)return {safe:true};
+  return {safe:false,prob:r.prob};
+}
+/* Look for a qualifying 50/50 group. Every cell in one has exactly 50% mine odds, so only
+   those cells are candidates. Tries each touching cluster whole, then grows groups from
+   nearby pairs using the cells each failed check points at. */
+function findFiftyGroup(prob,budget=80){
+  const W=S.W,eps=1e-9,cand=[];
+  for(let i=0;i<prob.length;i++)if(!S.revealed[i]&&S.flag[i]<2&&Math.abs(prob[i]-.5)<eps)cand.push(i);
+  const cset=new Set(cand),tried=new Set();let checks=0;
+  const dist=(a,b)=>Math.max(Math.abs(a%W-b%W),Math.abs(Math.floor(a/W)-Math.floor(b/W)));
+  const attempt=g=>{
+    if(g.length<2||g.length>MAX_GROUP||checks>=budget)return null;
+    const key=[...g].sort((x,y)=>x-y).join(",");if(tried.has(key))return null;tried.add(key);
+    checks++;return checkGroup(g);
+  };
+  // Clusters of touching candidates, tried whole
+  const seen=new Set();
+  for(const c of cand){
+    if(seen.has(c))continue;const cl=[c];seen.add(c);
+    for(let h=0;h<cl.length;h++)for(const y of NB[cl[h]])if(cset.has(y)&&!seen.has(y)){seen.add(y);cl.push(y);}
+    const v=attempt(cl);if(v&&v.ok)return cl;
+  }
+  // Grow from nearby pairs
+  for(let i=0;i<cand.length;i++)for(let j=i+1;j<cand.length;j++){
+    if(dist(cand[i],cand[j])>2)continue;
+    let g=[cand[i],cand[j]];
+    while(checks<budget){
+      const v=attempt(g);if(!v)break;if(v.ok)return g;
+      const inG=new Set(g);let more=[];
+      if(v.add)more=v.add.filter(y=>cset.has(y)&&!inG.has(y));
+      else if(v.grow){for(const x of g)for(const y of NB[x])if(cset.has(y)&&!inG.has(y))more.push(y);more=[...new Set(more)];}
+      if(!more.length)break;g=g.concat(more);
+    }
+    if(checks>=budget)return null;
+  }
+  return null;
+}
+/* ===== LOGIC END ===== */
+/* Edge-first suggestion: a covered cell touching an opened number, least likely to be a mine;
+   ties go to the cell touching more numbers. Interior cells only when no edge cell is left. */
+function bestCell(prob){
+  const pickBest=edgeOnly=>{
+    let best=-1,bp=2,bt=-1;
+    for(let i=0;i<prob.length;i++){
+      if(S.revealed[i]||S.flag[i]>=2)continue;
+      let touch=0;for(const j of NB[i])if(S.revealed[j])touch++;
+      if(edgeOnly&&!touch)continue;
+      const p=prob[i];
+      if(p<bp-1e-9||(Math.abs(p-bp)<=1e-9&&touch>bt)){best=i;bp=p;bt=touch;}
+    }
+    return [best,bp];
+  };
+  let [best,bp]=pickBest(true);
+  if(best<0)[best,bp]=pickBest(false);
+  return best<0?{none:true}:{cell:best,p:bp};
+}
+/* One entry point for every heavy question, so it can run in the background or inline. */
+function solveOn(type,group){
+  if(type==="stuck"){
+    const r=hasSafeMove();
+    if(!r)return {unknown:true};
+    if(r.safe)return {safe:true};
+    const g=findFiftyGroup(r.prob);
+    return g?{group:g}:bestCell(r.prob);
+  }
+  if(type==="safe"){
+    const r=analyze([]);
+    if(r.tooComplex)return {tooComplex:true};
+    if(r.inconsistent)return {inconsistent:true};
+    const cells=[];for(let i=0;i<r.prob.length;i++)if(!S.revealed[i]&&r.prob[i]<1e-9)cells.push(i);
+    return {cells};
+  }
+  if(type==="group")return checkGroup(group);
+  return null;
+}
+</script>
+<script>
+const $=id=>document.getElementById(id);
+DIFFS.expert.w=16;DIFFS.expert.h=30; // tall Expert
+const CHEATS={beginner:0,intermediate:1,expert:3};
+const NAMES={beginner:"Beginner",intermediate:"Intermediate",expert:"Expert"};
+const reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const ICON_FLAG='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 2.2v11.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M5.9 2.6 12.8 5.5 5.9 8.4z" fill="currentColor"/></svg>';
+const ICON_MINE='<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="4.1" fill="currentColor"/><path d="M8 1.6v2.5M8 11.9v2.5M1.6 8h2.5M11.9 8h2.5M3.5 3.5l1.6 1.6M10.9 10.9l1.6 1.6M12.5 3.5l-1.6 1.6M5.1 10.9l-1.6 1.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+/* Settings, remembered on this device when the browser allows it */
+const opts={d:"beginner",naive:true,open:true,waves:true,stuck:true,unlimited:false,zoom:{}};
+try{const saved=JSON.parse(localStorage.getItem("ms2-mobile")||"{}");if(saved&&typeof saved==="object")Object.assign(opts,saved);}catch(e){}
+if(!NAMES[opts.d])opts.d="beginner";
+if(!opts.zoom||typeof opts.zoom!=="object")opts.zoom={};
+function saveOpts(){try{localStorage.setItem("ms2-mobile",JSON.stringify(opts));}catch(e){}}
+
+/* Wave playback: the board state is always final; these only delay what is drawn. */
+const WAVE_MS=60;
+const masked=new Map(); // cell -> flag value to keep drawing until its wave lands
+let anim=null,justSet=new Set(),afterAnim=null;
+function startAnim(waves){
+  if(!waves.length)return;
+  anim={waves,k:0,next:performance.now()+WAVE_MS,raf:0};
+  anim.raf=requestAnimationFrame(tickAnim);
+}
+function tickAnim(t){
+  if(!anim)return;
+  if(t>=anim.next){
+    justSet=new Set();
+    for(const i of anim.waves[anim.k]){masked.delete(i);justSet.add(i);}
+    anim.k++;anim.next=t+WAVE_MS;render();
+    if(anim.k>=anim.waves.length){finishAnim();return;}
+  }
+  anim.raf=requestAnimationFrame(tickAnim);
+}
+function finishAnim(){
+  if(anim)cancelAnimationFrame(anim.raf);
+  anim=null;masked.clear();render();
+  const f=afterAnim;afterAnim=null;if(f)f();
+}
+function flushAnim(){if(anim||masked.size){justSet=new Set();finishAnim();}}
+function dropAnim(){if(anim)cancelAnimationFrame(anim.raf);anim=null;masked.clear();justSet=new Set();afterAnim=null;}
+function whenDrawn(f){if(anim)afterAnim=f;else f();}
+
+let mode="dig",gen=0,cells=[],keys=[],safeSet=new Set(),denyCells=new Set(),liveSafe=false,settling=false,timerId=0;
+
+function msg(t,kind=""){const m=$("msg");m.textContent=t;m.className=kind;}
+
+/* ---------- Background solver ---------- */
+const WORKER_GLUE=`
+onmessage=e=>{
+  const {id,type,group,st}=e.data;
+  S={W:st.W,H:st.H,M:st.M,revealed:Uint8Array.from(st.revealed),flag:Uint8Array.from(st.flag),adj:Uint8Array.from(st.adj),pick:[]};
+  NB=buildNB(S.W,S.H);
+  let out;try{out=solveOn(type,group);}catch(err){out={error:String(err)};}
+  postMessage({id,out});
+};`;
+let worker=null,workerOK=true,workerURL=null,pending=null,reqId=0;
+function makeWorker(){
+  if(!workerOK||typeof Worker==="undefined")return null;
+  try{
+    if(!workerURL)workerURL=URL.createObjectURL(new Blob([$("logic").textContent+WORKER_GLUE],{type:"text/javascript"}));
+    const w=new Worker(workerURL);
+    w.onmessage=e=>{if(pending&&e.data.id===pending.id){const p=pending;pending=null;const o=e.data.out;p.resolve(o&&o.error?null:o);}};
+    w.onerror=ev=>{
+      if(ev&&ev.preventDefault)ev.preventDefault();
+      workerOK=false;try{w.terminate();}catch(_){}
+      if(worker===w)worker=null;
+      const p=pending;pending=null;
+      if(p)setTimeout(()=>{let o=null;try{o=solveOn(p.type,p.group);}catch(_){}p.resolve(o);},0);
+    };
+    return w;
+  }catch(e){workerOK=false;return null;}
+}
+function cancelSolve(){
+  if(!pending)return;
+  const p=pending;pending=null;p.resolve(null);
+  if(worker){try{worker.terminate();}catch(_){}worker=null;}
+}
+function solve(type,group){
+  cancelSolve();
+  if(!worker)worker=makeWorker();
+  if(!worker)return new Promise(r=>setTimeout(()=>{let o=null;try{o=solveOn(type,group);}catch(_){}r(o);},0));
+  const id=++reqId;
+  return new Promise(resolve=>{
+    pending={id,type,group,resolve};
+    worker.postMessage({id,type,group,st:{W:S.W,H:S.H,M:S.M,revealed:Array.from(S.revealed),flag:Array.from(S.flag),adj:Array.from(S.adj)}});
+  });
+}
+
+/* ---------- Board ---------- */
+function newGame(d=opts.d){
+  opts.d=d;saveOpts();gen++;cancelSolve();dropAnim();
+  S=newState(d);S.cheats=CHEATS[d];S.hint=false;NB=buildNB(S.W,S.H);
+  safeSet=new Set();denyCells=new Set();settling=false;liveSafe=liveSafe&&opts.unlimited;
+  clearInterval(timerId);
+  buildBoard();setMode("dig",true);
+  msg("Tap any cell to start. The first tap is always safe.");
+  render();$("scroller").scrollTo(0,0);
+}
+function buildBoard(){
+  const b=$("board");b.innerHTML="";cells=[];keys=[];
+  b.style.setProperty("--W",S.W);
+  const frag=document.createDocumentFragment();
+  for(let i=0;i<S.W*S.H;i++){
+    const c=document.createElement("div");c.className="cell";c.dataset.i=i;c.setAttribute("role","gridcell");
+    frag.appendChild(c);cells.push(c);keys.push("");
+  }
+  b.appendChild(frag);applyCell();
+}
+function applyCell(){
+  if(!S)return;
+  const avail=$("scroller").clientWidth-32;
+  const fit=Math.floor((avail-(S.W-1)*2)/S.W);
+  const base=Math.max(20,Math.min(44,fit));
+  const c=Math.max(16,Math.min(64,base+(opts.zoom[S.d]||0)));
+  document.documentElement.style.setProperty("--cell",c+"px");
+}
+function zoom(step){
+  if(!S)return;
+  const cur=opts.zoom[S.d]||0;opts.zoom[S.d]=Math.max(-12,Math.min(28,cur+step));
+  saveOpts();applyCell();
+}
+function cellView(i){
+  if(masked.has(i)){const pf=masked.get(i);return pf===1?{cls:"cell f",html:ICON_FLAG}:{cls:"cell",html:""};}
+  const just=justSet.has(i)?" just":"";
+  const f=S.flag[i],picked=S.pick.includes(i);
+  if(S.revealed[i]){const n=S.adj[i];return {cls:"cell open"+(n?" n"+n:"")+just,html:n?String(n):""};}
+  if(S.over&&!S.won){
+    if(i===S.lost)return {cls:"cell x",html:ICON_MINE};
+    if(S.mines[i]&&f!==1)return {cls:"cell m",html:ICON_MINE};
+    if(!S.mines[i]&&f===1)return {cls:"cell w",html:ICON_FLAG};
+  }
+  const extra=(safeSet.has(i)&&!S.over?" safe":"")+(picked?" pick":"")+(picked&&S.hint?" hint":"")+(denyCells.has(i)?" deny":"");
+  if(f===1)return {cls:"cell f"+extra,html:ICON_FLAG};
+  if(f===2)return {cls:"cell a"+extra+just,html:ICON_MINE};
+  if(f===3)return {cls:"cell r"+extra,html:ICON_MINE};
+  return {cls:"cell"+extra,html:""};
+}
+function render(){
+  for(let i=0;i<cells.length;i++){
+    const v=cellView(i),k=v.cls+"|"+v.html;
+    if(keys[i]===k)continue;keys[i]=k;
+    const c=cells[i];c.className=v.cls;c.innerHTML=v.html;
+  }
+  let flags=0;for(let i=0;i<S.flag.length;i++){if(masked.has(i)){if(masked.get(i))flags++;}else if(S.flag[i]&&!S.revealed[i])flags++;}
+  const left=S.M-flags;$("minesLeft").textContent=(left<0?"-":"")+String(Math.abs(left)).padStart(3,"0");
+  $("diffName").textContent=NAMES[S.d];
+  const st=$("settle");
+  const ready=!S.over&&!settling&&(S.pick.length>=2||(S.hint==="cell"&&S.pick.length===1));
+  st.disabled=!ready;st.classList.toggle("primary",ready);
+  st.textContent=settling?"Checking…":S.hint==="cell"&&S.pick.length===1?"Settle this cell":S.pick.length>=2?`Settle ${S.pick.length} cells`:"Settle";
+  $("clearPick").disabled=!S.pick.length||settling;
+  const cb=$("cheatBtn");
+  if(opts.unlimited){
+    $("cheatLeft").textContent=liveSafe?"on":"off";cb.setAttribute("aria-pressed",String(liveSafe));
+    cb.disabled=!S.started||S.over;
+  }else{
+    $("cheatLeft").textContent=String(S.cheats|0);cb.removeAttribute("aria-pressed");
+    cb.disabled=!S.started||S.over||!(S.cheats>0);
+  }
+  $("stats").textContent=`${NAMES[S.d]} · Auto-marked ${S.stats.flags} · Auto-opened ${S.stats.opens} · Settled ${S.stats.fifty}`;
+}
+function setMode(m,quiet){
+  mode=m;
+  document.querySelectorAll("#modeSeg button").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.m===m)));
+  if(m!=="pick"&&S&&S.pick.length&&!S.hint){S.pick=[];render();}
+  if(m==="pick"&&!quiet&&S&&S.started&&!S.over){if(S.hint){S.hint=false;S.pick=[];render();}msg("Tap every covered cell in the group, then tap Settle.");}
+}
+function startTimer(){
+  clearInterval(timerId);
+  const tick=()=>{if(!S.started||S.over)return;S.elapsed=Date.now()-S.t0;$("timer").textContent=String(Math.min(999,Math.floor(S.elapsed/1000))).padStart(3,"0");};
+  tick();timerId=setInterval(tick,1000);
+}
+
+/* ---------- Rules ---------- */
+function countOpen(){let c=0;for(let i=0;i<S.revealed.length;i++)c+=S.revealed[i];return c;}
+function reveal(i){
+  if(S.revealed[i])return false;
+  if(S.mines[i]){lose(i);return true;}
+  const st=[i];
+  while(st.length){
+    const j=st.pop();if(S.revealed[j])continue;if(S.flag[j]===1&&j!==i)continue;
+    S.flag[j]=0;S.revealed[j]=1;
+    if(S.adj[j]===0)for(const k of NB[j])if(!S.revealed[k]&&!S.mines[k])st.push(k);
+  }
+  return false;
+}
+function lose(i){S.over=true;S.lost=i;S.elapsed=Date.now()-S.t0;clearInterval(timerId);msg("Boom. That one was a mine. Tap New to play again.","deny");}
+function checkWin(){
+  if(S.over)return;
+  if(countOpen()===S.W*S.H-S.M){
+    S.over=true;S.won=true;S.elapsed=Date.now()-S.t0;clearInterval(timerId);
+    for(let i=0;i<S.mines.length;i++)if(S.mines[i]&&!S.flag[i])S.flag[i]=2;
+    const secs=Math.floor(S.elapsed/1000);whenDrawn(()=>msg(`Cleared in ${secs} seconds.`,"ok"));
+  }
+}
+/* The whole naive fill in one pass: no timers, nothing to wait for */
+function naiveAll(){
+  const animate=opts.waves&&!reduced,waves=[];
+  for(let guard=0;guard<5000&&!S.over;guard++){
+    const {flags,opens}=naiveWave(opts.open);
+    if(!flags.length&&!opens.length)break;
+    const before=animate?S.revealed.slice():null,wave=[];
+    for(const j of flags){if(animate&&!masked.has(j)){masked.set(j,S.flag[j]);wave.push(j);}S.flag[j]=2;S.stats.flags++;}
+    for(const j of opens){
+      if(S.revealed[j])continue;
+      if(S.mines[j]){console.error("Naive fill tried to open a mine",j);continue;}
+      const was=countOpen();S.flag[j]=0;reveal(j);S.stats.opens+=countOpen()-was;
+    }
+    if(animate){
+      for(let i=0;i<before.length;i++)if(!before[i]&&S.revealed[i]&&!masked.has(i)){masked.set(i,0);wave.push(i);}
+      if(wave.length)waves.push(wave);
+    }
+    checkWin();
+  }
+  if(animate)startAnim(waves);
+}
+function afterMove(){
+  flushAnim();gen++;cancelSolve();settling=false;
+  if(S.hint){S.hint=false;S.pick=[];}
+  if(!S.over&&opts.naive)naiveAll();
+  checkWin();render();
+  if(!S.over)postChecks();
+}
+async function postChecks(){
+  const my=gen;
+  if(!S.started||S.over)return;
+  if(opts.unlimited&&liveSafe){
+    const r=await solve("safe");if(my!==gen)return;
+    if(r&&r.cells){safeSet=new Set(r.cells);render();}
+  }
+  if(!opts.stuck)return;
+  const r=await solve("stuck");if(my!==gen||!r)return;
+  if(r.group){
+    whenDrawn(()=>{if(my!==gen)return;suggest(r.group,"group");msg(`No safe moves. These ${r.group.length} cells are a true 50/50. Tap Settle to resolve them.`,"ok");});
+  }else if(r.cell!=null){
+    whenDrawn(()=>{if(my!==gen)return;suggest([r.cell],"cell");msg(`No safe moves. Best cell to try: ${Math.round(r.p*100)}% mine chance. Tap Settle to reveal it risk-free.`,"ok");});
+  }
+}
+function scrollToCell(i){
+  const c=cells[i];if(!c)return;
+  const sc=$("scroller"),cr=c.getBoundingClientRect(),sr=sc.getBoundingClientRect();
+  const left=sc.scrollLeft+(cr.left-sr.left)-(sr.width-cr.width)/2;
+  const top=sc.scrollTop+(cr.top-sr.top)-(sr.height-cr.height)/2;
+  sc.scrollTo({left,top,behavior:reduced?"auto":"smooth"});
+}
+function suggest(list,kind){
+  if(mode==="pick")setMode("dig",true);
+  S.pick=list.slice();S.hint=kind;render();scrollToCell(list[0]);
+}
+
+/* ---------- Actions ---------- */
+function dig(i){
+  if(S.over)return;
+  if(!S.started){placeMines(i);S.started=true;S.t0=Date.now();startTimer();}
+  if(S.revealed[i]){
+    if(!chord(i))return;
+  }else{
+    if(S.flag[i]===1){msg("That cell is flagged. Long-press it, or use Flag, to remove the flag.");return;}
+    if(S.flag[i]>=2){msg("That cell is a known mine.");return;}
+    msg("");reveal(i);
+  }
+  afterMove();
+}
+function chord(i){
+  const n=S.adj[i];if(!n)return false;
+  let f=0;const todo=[];
+  for(const j of NB[i])if(!S.revealed[j]){if(S.flag[j])f++;else todo.push(j);}
+  if(f!==n||!todo.length)return false;
+  msg("");
+  for(const j of todo)if(reveal(j))break;
+  return true;
+}
+function toggleFlag(i){
+  if(S.over||!S.started)return;
+  if(S.revealed[i]){if(chord(i))afterMove();return;}
+  if(S.flag[i]>=2){msg("That mark is certain, so it stays.");return;}
+  S.flag[i]=S.flag[i]?0:1;
+  try{navigator.vibrate&&navigator.vibrate(12);}catch(e){}
+  render();
+}
+function pick(i){
+  if(!S.started||S.over){msg("Start a game first.");return;}
+  if(S.revealed[i]){msg("Pick covered cells only.");return;}
+  if(S.flag[i]>=2){msg("That cell is already known to be a mine.");return;}
+  if(S.hint){S.hint=false;S.pick=[];}
+  const at=S.pick.indexOf(i);
+  if(at>=0)S.pick.splice(at,1);
+  else{if(S.pick.length>=MAX_GROUP){msg(`A group can have at most ${MAX_GROUP} cells.`);return;}S.pick.push(i);}
+  render();
+  msg(S.pick.length<2?"Tap every covered cell in the group, then tap Settle.":`${S.pick.length} cells selected. Tap Settle to check them.`);
+}
+async function settle(){
+  flushAnim();
+  if(S.over||settling)return;
+  if(S.hint==="cell"&&S.pick.length===1){
+    const i=S.pick[0],wasMine=!!S.mines[i];
+    S.pick=[];S.hint=false;S.stats.fifty++;
+    if(wasMine)S.flag[i]=3;else{S.flag[i]=0;reveal(i);}
+    afterMove();
+    if(!S.over)msg(wasMine?"Settled: that cell was a mine, so it's marked. Keep going.":"Settled: that cell was safe.","ok");
+    return;
+  }
+  if(S.pick.length<2)return;
+  const group=S.pick.slice();
+  gen++;settling=true;render();
+  const my=gen;
+  const v=await solve("group",group);
+  if(my!==gen)return;
+  settling=false;
+  if(!v){render();msg("Couldn't check that group. Try again.","deny");return;}
+  if(!v.ok){
+    S.pick=[];S.hint=false;denyCells=new Set(group);render();msg(v.why,"deny");
+    setTimeout(()=>{denyCells=new Set();render();},900);return;
+  }
+  const truth=group.filter(g=>S.mines[g]);
+  const match=v.layouts.find(L=>L.length===truth.length&&L.every(g=>S.mines[g]));
+  if(!match){console.error("Group check passed but the real layout isn't one of the two");S.pick=[];render();msg("Couldn't settle that group.","deny");return;}
+  S.pick=[];S.hint=false;
+  for(const g of group){if(S.mines[g])S.flag[g]=3;else{S.flag[g]=0;reveal(g);}}
+  S.stats.fifty++;
+  if(mode==="pick")setMode("dig",true);
+  afterMove();
+  if(!S.over)msg("True 50/50 settled: the safe cells are open and the mines are marked.","ok");
+}
+async function cheat(){
+  flushAnim();
+  if(!S.started||S.over)return;
+  if(opts.unlimited){
+    liveSafe=!liveSafe;
+    if(!liveSafe){safeSet=new Set();render();msg("Safe-cell highlights off.");return;}
+    render();
+    const my=gen;const r=await solve("safe");if(my!==gen)return;
+    if(!r||r.tooComplex){msg("The board is too tangled to compute safe cells right now.");return;}
+    if(r.cells){safeSet=new Set(r.cells);render();msg(r.cells.length?`${r.cells.length} safe cell${r.cells.length===1?"":"s"} highlighted. They stay updated after each move.`:"Nothing is guaranteed safe right now.");}
+    return;
+  }
+  if(!(S.cheats>0))return;
+  const my=gen;$("cheatBtn").disabled=true;
+  const r=await solve("safe");
+  if(my!==gen)return;
+  if(!r||r.tooComplex){render();msg("The board is too tangled to compute safe cells right now. No cheat was used.");return;}
+  const found=(r.cells||[]).filter(i=>!safeSet.has(i));
+  if(!found.length){render();msg("Nothing new is guaranteed safe right now, so no cheat was used.");return;}
+  S.cheats--;found.forEach(i=>safeSet.add(i));render();
+  msg(`${found.length} safe cell${found.length===1?"":"s"} highlighted. ${S.cheats} cheat${S.cheats===1?"":"s"} left this game.`,"ok");
+  scrollToCell(found[0]);
+}
+
+/* ---------- Touch input: one press = one action, scrolling never becomes a tap ---------- */
+const board=$("board"),scroller=$("scroller");
+const SLOP=10,LONG=430;
+let press=null;
+function endPress(){if(!press)return;clearTimeout(press.timer);const c=cells[press.i];if(c)c.classList.remove("press");press=null;}
+function tapAction(i){
+  // A tap on a cell the wave hasn't drawn yet only finishes the wave, so you never act on a stale picture
+  if(masked.has(i)){flushAnim();return;}
+  flushAnim();
+  if(mode==="dig")dig(i);else if(mode==="flag")toggleFlag(i);else pick(i);}
+function longAction(i){
+  if(masked.has(i)){flushAnim();return;}
+  flushAnim();
+  if(mode==="dig"){if(!S.revealed[i])toggleFlag(i);}
+  else if(mode==="flag")dig(i);
+}
+board.addEventListener("pointerdown",e=>{
+  const c=e.target.closest(".cell");if(!c||!S)return;
+  if(e.pointerType==="mouse"&&e.button!==0&&e.button!==2)return;
+  endPress();
+  const i=+c.dataset.i;
+  press={id:e.pointerId,i,x:e.clientX,y:e.clientY,long:false,btn:e.button,type:e.pointerType,timer:0};
+  c.classList.add("press");
+  if(e.pointerType!=="mouse"){
+    press.timer=setTimeout(()=>{
+      if(!press||press.i!==i)return;
+      press.long=true;c.classList.remove("press");longAction(i);
+    },LONG);
+  }
+});
+board.addEventListener("pointermove",e=>{
+  if(!press||e.pointerId!==press.id)return;
+  if(Math.hypot(e.clientX-press.x,e.clientY-press.y)>SLOP)endPress();
+});
+board.addEventListener("pointerup",e=>{
+  if(!press||e.pointerId!==press.id)return;
+  const p=press;endPress();
+  if(p.long)return;
+  if(p.type==="mouse"&&p.btn===2){toggleFlag(p.i);return;}
+  tapAction(p.i);
+});
+board.addEventListener("pointercancel",endPress);
+board.addEventListener("lostpointercapture",()=>{});
+scroller.addEventListener("scroll",endPress,{passive:true});
+board.addEventListener("contextmenu",e=>e.preventDefault());
+board.addEventListener("selectstart",e=>e.preventDefault());
+
+/* ---------- Controls ---------- */
+$("modeSeg").addEventListener("click",e=>{const b=e.target.closest("button");if(b)setMode(b.dataset.m);});
+$("settle").addEventListener("click",settle);
+$("clearPick").addEventListener("click",()=>{S.pick=[];S.hint=false;render();msg("Selection cleared.");});
+$("cheatBtn").addEventListener("click",cheat);
+$("newGame").addEventListener("click",()=>newGame());
+$("zoomIn").addEventListener("click",()=>zoom(4));
+$("zoomOut").addEventListener("click",()=>zoom(-4));
+const sheet=$("sheet");
+function openSheet(){syncSettings();render();sheet.hidden=false;}
+function closeSheet(){sheet.hidden=true;}
+$("menuBtn").addEventListener("click",openSheet);
+$("closeSheet").addEventListener("click",closeSheet);
+$("backdrop").addEventListener("click",closeSheet);
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!sheet.hidden)closeSheet();});
+$("diffSeg").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;newGame(b.dataset.d);syncSettings();closeSheet();});
+function syncSettings(){
+  $("optNaive").checked=opts.naive;$("optOpen").checked=opts.open;$("optWaves").checked=opts.waves;$("optStuck").checked=opts.stuck;$("optUnlimited").checked=opts.unlimited;
+  document.querySelectorAll("#diffSeg button").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.d===(S?S.d:opts.d))));
+}
+$("optNaive").addEventListener("change",e=>{opts.naive=e.target.checked;saveOpts();if(opts.naive&&S.started&&!S.over)afterMove();});
+$("optOpen").addEventListener("change",e=>{opts.open=e.target.checked;saveOpts();if(opts.naive&&S.started&&!S.over)afterMove();});
+$("optWaves").addEventListener("change",e=>{opts.waves=e.target.checked;saveOpts();if(!opts.waves)flushAnim();});
+$("optStuck").addEventListener("change",e=>{opts.stuck=e.target.checked;saveOpts();if(!opts.stuck&&S.hint){S.hint=false;S.pick=[];render();}else if(S.started&&!S.over)postChecks();});
+$("optUnlimited").addEventListener("change",e=>{opts.unlimited=e.target.checked;saveOpts();if(!opts.unlimited&&liveSafe){liveSafe=false;safeSet=new Set();}render();});
+let fitRaf=0;addEventListener("resize",()=>{cancelAnimationFrame(fitRaf);fitRaf=requestAnimationFrame(applyCell);});
+$("lg1").innerHTML=ICON_FLAG;$("lg2").innerHTML=ICON_MINE;$("lg3").innerHTML=ICON_MINE;
+
+/* Keep a game in progress across page updates */
+function serialize(){flushAnim();return {S:{...S,mines:[...S.mines],adj:[...S.adj],revealed:[...S.revealed],flag:[...S.flag],pick:[],hint:false},safe:[...safeSet],liveSafe};}
+window.claude?.hot?.snapshot?.(serialize);
+function start(data){
+  const d=data&&data.S;
+  if(d&&NAMES[d.d]&&Array.isArray(d.mines)&&d.mines.length===d.W*d.H){
+    S={...d,mines:Uint8Array.from(d.mines),adj:Uint8Array.from(d.adj),revealed:Uint8Array.from(d.revealed),flag:Uint8Array.from(d.flag),pick:[],hint:false};
+    if(typeof S.cheats!=="number")S.cheats=CHEATS[S.d];
+    NB=buildNB(S.W,S.H);safeSet=new Set(data.safe||[]);liveSafe=!!data.liveSafe&&opts.unlimited;
+    buildBoard();setMode("dig",true);
+    if(S.started&&!S.over){S.t0=Date.now()-(S.elapsed||0);startTimer();}
+    render();
+  }else newGame(opts.d);
+  syncSettings();
+}
+window.claude?.hot?.ready?window.claude.hot.ready(start):start(window.claude?.hot?.data??{});
+</script>
+<script>
+if("serviceWorker" in navigator&&window.isSecureContext){
+  addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
+}
+</script>
+</body>
+</html>

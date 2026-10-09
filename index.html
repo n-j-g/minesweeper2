@@ -409,13 +409,15 @@ function hasSafeMove(){
 /* Look for a qualifying 50/50 group. Every cell in one has exactly 50% mine odds, so only
    those cells are candidates. Tries each touching cluster whole, then grows groups from
    nearby pairs using the cells each failed check points at. */
+let FIND_DEADLINE=0; // set by the stuck check; 0 = no limit
+const pastDeadline=()=>FIND_DEADLINE>0&&Date.now()>FIND_DEADLINE;
 function findFiftyGroup(prob,budget=80){
   const W=S.W,eps=1e-9,cand=[];
   for(let i=0;i<prob.length;i++)if(!S.revealed[i]&&S.flag[i]<2&&Math.abs(prob[i]-.5)<eps)cand.push(i);
   const cset=new Set(cand),tried=new Set();let checks=0;
   const dist=(a,b)=>Math.max(Math.abs(a%W-b%W),Math.abs(Math.floor(a/W)-Math.floor(b/W)));
   const attempt=g=>{
-    if(g.length<2||g.length>MAX_GROUP||checks>=budget)return null;
+    if(g.length<2||g.length>MAX_GROUP||checks>=budget||pastDeadline())return null;
     const key=[...g].sort((x,y)=>x-y).join(",");if(tried.has(key))return null;tried.add(key);
     checks++;return checkGroup(g);
   };
@@ -437,7 +439,7 @@ function findFiftyGroup(prob,budget=80){
       else if(v.grow){for(const x of g)for(const y of NB[x])if(cset.has(y)&&!inG.has(y))more.push(y);more=[...new Set(more)];}
       if(!more.length)break;g=g.concat(more);
     }
-    if(checks>=budget)return null;
+    if(checks>=budget||pastDeadline())return null;
   }
   return null;
 }
@@ -466,7 +468,8 @@ function solveOn(type,group){
     const r=hasSafeMove();
     if(!r)return {unknown:true};
     if(r.safe)return {safe:true};
-    const g=findFiftyGroup(r.prob);
+    FIND_DEADLINE=Date.now()+2000;
+    let g=null;try{g=findFiftyGroup(r.prob);}finally{FIND_DEADLINE=0;}
     return g?{group:g}:bestCell(r.prob);
   }
   if(type==="safe"){
@@ -537,36 +540,46 @@ onmessage=e=>{
   let out;try{out=solveOn(type,group);}catch(err){out={error:String(err)};}
   postMessage({id,out});
 };`;
-let worker=null,workerOK=true,workerURL=null,pending=null,reqId=0;
+let worker=null,workerOK=true,workerURL=null,active=null,queue=[],reqId=0;
+function runInline(p){
+  setTimeout(()=>{let o=null;try{o=solveOn(p.type,p.group);}catch(_){}if(active===p)active=null;p.resolve(o);pump();},0);
+}
 function makeWorker(){
   if(!workerOK||typeof Worker==="undefined")return null;
   try{
     if(!workerURL)workerURL=URL.createObjectURL(new Blob([$("logic").textContent+WORKER_GLUE],{type:"text/javascript"}));
     const w=new Worker(workerURL);
-    w.onmessage=e=>{if(pending&&e.data.id===pending.id){const p=pending;pending=null;const o=e.data.out;p.resolve(o&&o.error?null:o);}};
+    w.onmessage=e=>{
+      if(!active||e.data.id!==active.id)return;
+      const p=active;active=null;const o=e.data.out;p.resolve(o&&o.error?null:o);pump();
+    };
     w.onerror=ev=>{
       if(ev&&ev.preventDefault)ev.preventDefault();
       workerOK=false;try{w.terminate();}catch(_){}
       if(worker===w)worker=null;
-      const p=pending;pending=null;
-      if(p)setTimeout(()=>{let o=null;try{o=solveOn(p.type,p.group);}catch(_){}p.resolve(o);},0);
+      if(active)runInline(active);
     };
     return w;
   }catch(e){workerOK=false;return null;}
 }
+function pump(){
+  if(active||!queue.length)return;
+  const p=queue.shift();active=p;
+  if(!worker)worker=makeWorker();
+  if(!worker){runInline(p);return;}
+  worker.postMessage({id:p.id,type:p.type,group:p.group,st:p.st});
+}
+/* The board changed: drop every queued and running request */
 function cancelSolve(){
-  if(!pending)return;
-  const p=pending;pending=null;p.resolve(null);
-  if(worker){try{worker.terminate();}catch(_){}worker=null;}
+  const all=(active?[active]:[]).concat(queue);
+  if(active&&worker){try{worker.terminate();}catch(_){}worker=null;}
+  active=null;queue=[];
+  for(const p of all)p.resolve(null);
 }
 function solve(type,group){
-  cancelSolve();
-  if(!worker)worker=makeWorker();
-  if(!worker)return new Promise(r=>setTimeout(()=>{let o=null;try{o=solveOn(type,group);}catch(_){}r(o);},0));
-  const id=++reqId;
   return new Promise(resolve=>{
-    pending={id,type,group,resolve};
-    worker.postMessage({id,type,group,st:{W:S.W,H:S.H,M:S.M,revealed:Array.from(S.revealed),flag:Array.from(S.flag),adj:Array.from(S.adj)}});
+    queue.push({id:++reqId,type,group,resolve,st:{W:S.W,H:S.H,M:S.M,revealed:Array.from(S.revealed),flag:Array.from(S.flag),adj:Array.from(S.adj)}});
+    pump();
   });
 }
 
@@ -823,8 +836,17 @@ async function cheat(){
   const r=await solve("safe");
   if(my!==gen)return;
   if(!r||r.tooComplex){render();msg("The board is too tangled to compute safe cells right now. No cheat was used.");return;}
-  const found=(r.cells||[]).filter(i=>!safeSet.has(i));
-  if(!found.length){render();msg("Nothing new is guaranteed safe right now, so no cheat was used.");return;}
+  const all=r.cells||[],found=all.filter(i=>!safeSet.has(i));
+  if(!found.length){
+    render();
+    if(all.length){
+      msg(`No new safe cells, so no cheat was used. ${all.length} highlighted safe cell${all.length===1?" is":"s are"} still unopened. Showing ${all.length===1?"it":"one"} now.`);
+      scrollToCell(all[0]);
+    }else{
+      msg(opts.stuck?"Nothing is guaranteed safe, so no cheat was used. A cell to settle is on its way.":"Nothing is guaranteed safe right now, so no cheat was used.");
+    }
+    return;
+  }
   S.cheats--;found.forEach(i=>safeSet.add(i));render();
   msg(`${found.length} safe cell${found.length===1?"":"s"} highlighted. ${S.cheats} cheat${S.cheats===1?"":"s"} left this game.`,"ok");
   scrollToCell(found[0]);

@@ -1,5 +1,5 @@
 // Offline support. Bump CACHE when shipping a new version so old files are cleared.
-const CACHE = "ms2-v1";
+const CACHE = "ms2-v2";
 const ASSETS = [
   "./",
   "./index.html",
